@@ -31,6 +31,22 @@ export class RequestGate extends DurableObject<Env> {
   }
 
   async alarm(): Promise<void> {
-    await this.ctx.storage.deleteAll();
+    const sql = this.ctx.storage.sql;
+    const names = new Set(sql.exec<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'table'",
+    ).toArray().map((table) => table.name));
+    const now = Date.now();
+    const window = Math.floor(now / 60_000);
+    let cleanup = 0;
+    if (names.has("claim")) {
+      const active = sql.exec<{ expires: number }>("SELECT expires FROM claim WHERE expires >= ?", now).toArray()[0];
+      if (active) cleanup = active.expires + 1000;
+    }
+    if (names.has("quota")) {
+      const active = sql.exec<{ window: number }>("SELECT window FROM quota WHERE window >= ?", window).toArray()[0];
+      if (active) cleanup = Math.max(cleanup, (active.window + 2) * 60_000);
+    }
+    if (cleanup) await this.ctx.storage.setAlarm(cleanup);
+    else await this.ctx.storage.deleteAll();
   }
 }

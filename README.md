@@ -10,7 +10,7 @@ Výchozí konfigurace Workeru je sandbox. Prohlížeč bez konfigurace Supabase 
 - `server/discover` a `tools/list` jsou bez platby. `tools/call` používá x402 v2 HTTP transport. Výzva je `402` s `PAYMENT-REQUIRED`, klient opakuje požadavek s `PAYMENT-SIGNATURE` nebo aliasem `X-PAYMENT`. Úspěch vrací `PAYMENT-RESPONSE` a `X-PAYMENT-RESPONSE`. Alias hlavičky používá formát v2.
 - `exact` podporuje EIP-3009 podpisy EOA. `upto` používá Permit2, adresu facilitátora z `/supported` a účtuje desetinu stropu plus dvě miliontiny USDC za bajt vstupu, nejvýš však schválený strop. Worker ověří podpis lokálně a v živém režimu volá `/verify` a `/settle`.
 - Katalog se ukládá do KV na 60 sekund. Replay klíče v KV urychlují odmítnutí opakovaných požadavků, jejich atomické získání hlídají Durable Objects. Agenti s ověřeným KYA a alespoň deseti zaplacenými voláními dostanou desetiprocentní slevu až k minimální ceně. Audit nejistého výsledku facilitátora je veden jako nepotvrzené zúčtování, opakování použité autorizace je zablokováno.
-- Veřejné manifesty jsou na `/agent-manifest.txt` a `/.well-known/x402.json`. V prohlížečích s WebMCP se registrují nástroje `get_x402_catalog` a `calculate_batch_quote`.
+- Veřejné manifesty jsou na `/agent-manifest.txt` a `/.well-known/x402.json`. V prohlížečích s WebMCP (`document.modelContext` nebo `navigator.modelContext`) se registrují nástroje `get_x402_catalog` a `calculate_batch_quote`.
 
 ## Data nástrojů
 
@@ -22,7 +22,7 @@ Výchozí konfigurace Workeru je sandbox. Prohlížeč bez konfigurace Supabase 
 
 ## Produkční prostředí GitHub Actions
 
-Workflow ověřuje pull requesty i větev `main`. Nasazení z `main` probíhá po nastavení repozitářové proměnné `X402_DEPLOY_ENABLED=true`. Událost `workflow_dispatch` umožňuje nasazení zopakovat. Supabase migrace se aplikuje před společným nasazením Workeru a PWA.
+Workflow ověřuje pull requesty i větev `main`. Nasazení z `main` probíhá po nastavení repozitářové proměnné `X402_DEPLOY_ENABLED=true`. Událost `workflow_dispatch` umožňuje nasazení zopakovat. Supabase migrace se aplikuje před společným nasazením Workeru a PWA. Ruční cíl `sandbox` na větvi `main` nasadí Worker `x402-gateway-sandbox` s PWA. Používá `CLOUDFLARE_ACCOUNT_ID` a `CLOUDFLARE_API_TOKEN` prostředí `sandbox` a běží i bez Supabase.
 
 | Typ | Nastavení |
 | --- | --- |

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Blocks, Calculator, Clipboard, ExternalLink, FileJson } from "lucide-react";
 import { usdcToUnits } from "@platform/shared/x402";
 import { toolContracts } from "@platform/shared/tool-contracts";
@@ -6,9 +6,15 @@ import type { Endpoint } from "@platform/shared/database";
 import { PageTitle } from "./management";
 
 type ToolResponse = { content: { type: "text"; text: string }[] };
+type BrowserTool = {
+  name: string;
+  description: string;
+  inputSchema: object;
+  execute: (input: Record<string, unknown>) => Promise<ToolResponse>;
+};
 type BrowserModelContext = {
-  registerTool(tool: { name: string; description: string; inputSchema: object; execute: (input: Record<string, unknown>) => Promise<ToolResponse> }): void;
-  unregisterTool(name: string): void;
+  registerTool(tool: BrowserTool, options?: { signal: AbortSignal }): void | Promise<void>;
+  unregisterTool?(name: string): void;
 };
 
 function quote(endpoint: Endpoint, count: number) {
@@ -18,41 +24,63 @@ function quote(endpoint: Endpoint, count: number) {
 
 export function useWebMcp(endpoints: Endpoint[]) {
   const [available, setAvailable] = useState(false);
+  const catalog = useRef(endpoints);
+  useEffect(() => { catalog.current = endpoints; }, [endpoints]);
+
   useEffect(() => {
-    const context = (navigator as Navigator & { modelContext?: BrowserModelContext }).modelContext;
+    const modern = (document as Document & { modelContext?: BrowserModelContext }).modelContext;
+    const legacy = (navigator as Navigator & { modelContext?: BrowserModelContext }).modelContext;
+    const context = modern ?? legacy;
     if (!context) return;
-    const active = endpoints.filter((entry) => entry.is_active);
-    const result = (data: unknown): ToolResponse => ({ content: [{ type: "text", text: JSON.stringify(data) }] });
+    const abort = new AbortController();
     const registered: string[] = [];
-    try {
-      context.registerTool({
+    const result = (data: unknown): ToolResponse => ({ content: [{ type: "text", text: JSON.stringify(data) }] });
+    const tools: BrowserTool[] = [
+      {
         name: "get_x402_catalog", description: "Read active x402 MCP tools and USDC pricing.",
         inputSchema: { type: "object", properties: {}, additionalProperties: false },
-        execute: async () => result(active.map((tool) => ({
+        execute: async () => result(catalog.current.filter((entry) => entry.is_active).map((tool) => ({
           name: tool.tool_name, description: tool.description, price_usdc: tool.price_usdc,
           pricing_scheme: tool.pricing_scheme, input_schema: tool.input_schema, axo_metadata: tool.axo_metadata,
         }))),
-      });
-      registered.push("get_x402_catalog");
-      context.registerTool({
+      },
+      {
         name: "calculate_batch_quote", description: "Calculate the fixed total or authorization cap for repeated calls.",
         inputSchema: { type: "object", required: ["tool", "calls"], additionalProperties: false, properties: {
-          tool: { type: "string", enum: active.map((entry) => entry.tool_name) }, calls: { type: "integer", minimum: 1, maximum: 10000 },
+          tool: { type: "string", description: "An active tool name from get_x402_catalog" },
+          calls: { type: "integer", minimum: 1, maximum: 10000 },
         } },
         execute: async (input) => {
-          const tool = active.find((entry) => entry.tool_name === input.tool);
+          const tool = catalog.current.find((entry) => entry.is_active && entry.tool_name === input.tool);
           const count = input.calls;
           if (!tool || typeof count !== "number" || !Number.isInteger(count) || count < 1 || count > 10_000) throw new Error("Invalid batch quote arguments");
           return result(quote(tool, count));
         },
-      });
-      registered.push("calculate_batch_quote");
-      setAvailable(true);
-    } catch {
-      setAvailable(false);
-    }
-    return () => { for (const name of registered) context.unregisterTool(name); };
-  }, [endpoints]);
+      },
+    ];
+    const cleanUp = () => {
+      abort.abort();
+      if (!modern) for (const name of registered) context.unregisterTool?.(name);
+    };
+    void Promise.resolve().then(async () => {
+      for (const tool of tools) {
+        if (abort.signal.aborted) return;
+        if (modern) await context.registerTool(tool, { signal: abort.signal });
+        else {
+          const pending = context.registerTool(tool);
+          registered.push(tool.name);
+          await pending;
+        }
+      }
+      if (!abort.signal.aborted) setAvailable(true);
+    }).catch(() => {
+      if (!abort.signal.aborted) {
+        cleanUp();
+        setAvailable(false);
+      }
+    });
+    return () => { if (!abort.signal.aborted) cleanUp(); };
+  }, []);
   return available;
 }
 
@@ -68,7 +96,7 @@ export function WebMcp({ endpoints, available }: { endpoints: Endpoint[]; availa
     <PageTitle icon={Blocks} section="AGENT DISCOVERY" title="WebMCP" description="Expose browser tools and publish discovery metadata for external agents." />
     <div className="sandbox-grid">
       <section className="panel editor">
-        <div className="panel-heading"><div><h2>Browser tools</h2><p><code>navigator.modelContext</code></p></div>
+        <div className="panel-heading"><div><h2>Browser tools</h2><p><code>WebMCP model context</code></p></div>
           <span className={`status-badge ${available ? "green" : "muted"}`}><i />{available ? "REGISTERED" : "UNAVAILABLE IN THIS BROWSER"}</span>
         </div>
         <div className="form-stack">

@@ -5,6 +5,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      target:
+        description: Deployment target
+        type: choice
+        options: [production, sandbox]
+        default: production
 
 permissions:
   contents: read
@@ -26,7 +32,7 @@ jobs:
 
   deploy:
     needs: verify
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.X402_DEPLOY_ENABLED == 'true'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && inputs.target != 'sandbox' && vars.X402_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production
@@ -137,3 +143,26 @@ jobs:
         run: |
           curl -fsS --retry 4 "${X402_PUBLIC_URL%/}/api/health" | jq -e '.mode == "live" and .operatorConfigured'
           curl -fsS --retry 4 "${X402_PUBLIC_URL%/}/.well-known/x402.json" | jq -e '.x402Version == 2'
+
+  deploy_sandbox:
+    needs: verify
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.target == 'sandbox'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: sandbox
+    concurrency:
+      group: x402-sandbox
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w @platform/web
+      - name: Deploy simulated Worker and PWA
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npm run deploy -- --name x402-gateway-sandbox
