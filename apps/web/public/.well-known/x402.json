@@ -1,0 +1,12 @@
+{
+  "x402Version": 2,
+  "mcp": "/mcp",
+  "mcpProtocolVersion": "2026-07-28",
+  "transport": "streamable-http",
+  "discoveryMethod": "tools/list",
+  "currency": "USDC",
+  "decimals": 6,
+  "schemes": ["exact", "upto"],
+  "networks": ["eip155:8453", "eip155:84532"],
+  "paymentHeaders": { "required": "PAYMENT-REQUIRED", "signature": "PAYMENT-SIGNATURE", "response": "PAYMENT-RESPONSE" }
+}

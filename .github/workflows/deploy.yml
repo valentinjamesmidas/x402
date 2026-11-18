@@ -1,0 +1,168 @@
+name: Verify and deploy x402
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Deployment target
+        type: choice
+        options: [production, sandbox]
+        default: production
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  deploy:
+    needs: verify
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && inputs.target != 'sandbox' && vars.X402_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    concurrency:
+      group: x402-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.109.0
+      - name: Validate deployment configuration
+        env:
+          SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_KV_NAMESPACE_ID: ${{ vars.CLOUDFLARE_KV_NAMESPACE_ID }}
+          OPERATOR_WALLET_ADDRESS: ${{ vars.OPERATOR_WALLET_ADDRESS }}
+          X402_NETWORK: ${{ vars.X402_NETWORK || 'eip155:8453' }}
+          FACILITATOR_URL: ${{ vars.FACILITATOR_URL }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CDP_API_KEY_ID: ${{ secrets.CDP_API_KEY_ID }}
+          CDP_API_KEY_SECRET: ${{ secrets.CDP_API_KEY_SECRET }}
+        run: |
+          node --input-type=module <<'JS'
+          const required = [
+            "SUPABASE_PROJECT_REF", "SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY", "CLOUDFLARE_ACCOUNT_ID",
+            "CLOUDFLARE_KV_NAMESPACE_ID", "OPERATOR_WALLET_ADDRESS", "SUPABASE_ACCESS_TOKEN",
+            "SUPABASE_DB_PASSWORD", "SUPABASE_SERVICE_ROLE_KEY", "CLOUDFLARE_API_TOKEN",
+          ];
+          const missing = required.filter((key) => !process.env[key]?.trim());
+          if (missing.length) throw Error(`Missing deployment configuration: ${missing.join(", ")}`);
+          for (const key of ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_KV_NAMESPACE_ID"]) {
+            if (!/^[a-f0-9]{32}$/.test(process.env[key])) throw Error(`Invalid ${key}`);
+          }
+          const wallet = process.env.OPERATOR_WALLET_ADDRESS.toLowerCase();
+          if (!/^0x[0-9a-f]{40}$/.test(wallet) || ["0x" + "0".repeat(40), "0x" + "0".repeat(36) + "dead"].includes(wallet)) {
+            throw Error("Invalid OPERATOR_WALLET_ADDRESS");
+          }
+          if (!["eip155:8453", "eip155:84532"].includes(process.env.X402_NETWORK)) throw Error("Invalid X402_NETWORK");
+          if (process.env.X402_NETWORK === "eip155:8453") {
+            const provider = process.env.FACILITATOR_URL ? new URL(process.env.FACILITATOR_URL) : null;
+            if (provider?.protocol !== "https:" || provider.hostname === "x402.org") throw Error("Configure a mainnet facilitator that supports exact and upto");
+          }
+          if (Boolean(process.env.CDP_API_KEY_ID) !== Boolean(process.env.CDP_API_KEY_SECRET)) throw Error("Set both CDP credentials");
+          if (new URL(process.env.SUPABASE_URL).protocol !== "https:") throw Error("Supabase URL must use HTTPS");
+          JS
+      - name: Apply Supabase migrations
+        env:
+          SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          supabase link --project-ref "$SUPABASE_PROJECT_REF"
+          supabase db push --yes
+      - name: Build PWA static assets
+        run: npm run build -w @platform/web
+      - name: Deploy Worker and PWA
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_KV_NAMESPACE_ID: ${{ vars.CLOUDFLARE_KV_NAMESPACE_ID }}
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SANDBOX_MODE: "false"
+          ENABLE_PROTOCOL_SANDBOX: ${{ vars.ENABLE_PROTOCOL_SANDBOX || 'true' }}
+          OPERATOR_WALLET_ADDRESS: ${{ vars.OPERATOR_WALLET_ADDRESS }}
+          X402_NETWORK: ${{ vars.X402_NETWORK || 'eip155:8453' }}
+          FACILITATOR_URL: ${{ vars.FACILITATOR_URL }}
+          FACILITATOR_TOKEN: ${{ secrets.FACILITATOR_TOKEN }}
+          CDP_API_KEY_ID: ${{ secrets.CDP_API_KEY_ID }}
+          CDP_API_KEY_SECRET: ${{ secrets.CDP_API_KEY_SECRET }}
+          ALLOWED_ORIGINS: ${{ vars.ALLOWED_ORIGINS }}
+          MARKET_QUOTES_URL: ${{ vars.MARKET_QUOTES_URL }}
+          KYB_RISK_URL: ${{ vars.KYB_RISK_URL }}
+          DATA_PROVIDER_TOKEN: ${{ secrets.DATA_PROVIDER_TOKEN }}
+        run: |
+          config="$(mktemp workers/x402-gateway/wrangler.ci.XXXXXX.toml)"
+          secret_file="$(mktemp)"
+          trap 'rm -f "$config" "$secret_file"' EXIT
+          cp workers/x402-gateway/wrangler.toml "$config"
+          printf '\n[[kv_namespaces]]\nbinding = "X402_NONCE_STORE"\nid = "%s"\n' "$CLOUDFLARE_KV_NAMESPACE_ID" >> "$config"
+          node --input-type=module - "$secret_file" <<'JS'
+          import { writeFileSync } from "node:fs";
+          const keys = ["SUPABASE_SERVICE_ROLE_KEY", "FACILITATOR_TOKEN", "CDP_API_KEY_ID", "CDP_API_KEY_SECRET", "DATA_PROVIDER_TOKEN"];
+          writeFileSync(process.argv[2], JSON.stringify(Object.fromEntries(keys.map((key) => [key, process.env[key] || ""]))), {mode: 0o600});
+          JS
+          npx --no-install wrangler deploy --config "$config" --secrets-file "$secret_file" \
+            --var "SANDBOX_MODE:$SANDBOX_MODE" --var "X402_NETWORK:$X402_NETWORK" \
+            --var "ENABLE_PROTOCOL_SANDBOX:$ENABLE_PROTOCOL_SANDBOX" --var "OPERATOR_WALLET_ADDRESS:$OPERATOR_WALLET_ADDRESS" \
+            --var "SUPABASE_URL:$SUPABASE_URL" --var "SUPABASE_PUBLISHABLE_KEY:$SUPABASE_PUBLISHABLE_KEY" \
+            --var "FACILITATOR_URL:${FACILITATOR_URL:-https://x402.org/facilitator}" \
+            --var "ALLOWED_ORIGINS:$ALLOWED_ORIGINS" --var "MARKET_QUOTES_URL:$MARKET_QUOTES_URL" --var "KYB_RISK_URL:$KYB_RISK_URL"
+      - name: Check deployed gateway
+        if: vars.X402_PUBLIC_URL != ''
+        env:
+          X402_PUBLIC_URL: ${{ vars.X402_PUBLIC_URL }}
+        run: |
+          curl -fsS --retry 4 "${X402_PUBLIC_URL%/}/api/health" | jq -e '.mode == "live" and .operatorConfigured'
+          curl -fsS --retry 4 "${X402_PUBLIC_URL%/}/.well-known/x402.json" | jq -e '.x402Version == 2'
+
+  deploy_sandbox:
+    needs: verify
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.target == 'sandbox'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: sandbox
+    concurrency:
+      group: x402-sandbox
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w @platform/web
+      - name: Deploy simulated Worker and PWA
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npm run deploy -- --name x402-gateway-sandbox

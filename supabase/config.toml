@@ -1,0 +1,10 @@
+project_id = "x402"
+
+[db]
+major_version = 17
+
+[db.seed]
+enabled = false
+
+[realtime]
+enabled = true
