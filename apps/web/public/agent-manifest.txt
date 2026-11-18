@@ -1,0 +1,7 @@
+# x402 Agent Gateway
+
+MCP: /mcp
+Protocol: 2026-07-28, Streamable HTTP
+Payment discovery: /.well-known/x402.json
+Call tools/list for live pricing and JSON Schemas. Execute tools with tools/call
+and attach PAYMENT-SIGNATURE after receiving HTTP 402.

@@ -1,0 +1,29 @@
+{
+  "name": "x402-platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "packages/*",
+    "workers/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces",
+    "test": "vitest run",
+    "build": "npm run build -w @platform/web && npm run build -w @platform/gateway",
+    "dev": "npm run dev -w @platform/web",
+    "dev:edge": "wrangler dev --config workers/x402-gateway/wrangler.toml",
+    "deploy": "wrangler deploy --config workers/x402-gateway/wrangler.toml"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261118.1",
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.1",
+    "wrangler": "^4.164.0"
+  }
+}

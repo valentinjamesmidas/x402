@@ -1,0 +1,16 @@
+{
+  "name": "@platform/shared",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@x402/evm": "^2.31.0",
+    "viem": "^2.58.0",
+    "zod": "^4.6.7"
+  }
+}

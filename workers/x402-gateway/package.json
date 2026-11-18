@@ -1,0 +1,18 @@
+{
+  "name": "@platform/gateway",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "wrangler deploy --dry-run --outdir dist"
+  },
+  "dependencies": {
+    "@cfworker/json-schema": "^4.1.6",
+    "@coinbase/cdp-sdk": "^1.62.0",
+    "@platform/shared": "*",
+    "@supabase/supabase-js": "^2.119.0",
+    "hono": "^4.13.19",
+    "structured-headers": "^2.1.1",
+    "zod": "^4.6.7"
+  }
+}

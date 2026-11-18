@@ -1,0 +1,29 @@
+name = "x402-gateway"
+main = "src/worker.ts"
+compatibility_date = "2026-11-18"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "../../apps/web/dist"
+not_found_handling = "single-page-application"
+run_worker_first = ["/mcp", "/sandbox/*", "/api/*", "/.well-known/x402.json", "/agent-manifest.txt"]
+binding = "ASSETS"
+
+[observability]
+enabled = true
+head_sampling_rate = 0.1
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.01
+
+[vars]
+SANDBOX_MODE = "true"
+X402_NETWORK = "eip155:84532"
+FACILITATOR_URL = "https://x402.org/facilitator"
+
+[durable_objects]
+bindings = [{ name = "GATES", class_name = "RequestGate" }]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RequestGate"]
